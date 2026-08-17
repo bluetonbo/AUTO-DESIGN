@@ -88,6 +88,10 @@ LANG_DICT = {
         "pdf_missing": "pdfplumber가 설치되어 있지 않아 PDF 텍스트 추출을 사용할 수 없습니다. requirements.txt를 확인하세요.",
         "llm_check": "애매한 재질 표기는 LLM으로 재확인",
         "history_empty": "저장된 검토 이력이 없습니다.",
+        "history_sheets_error": "검토 이력 저장소(Sheets) 연결 오류 — 이번 세션 이력만 임시로 표시됩니다.",
+        "history_session_only": "Sheets 미설정 상태입니다. 이 목록은 현재 세션에서만 유지되며 새로고침 시 사라집니다.",
+        "hist_time": "시각", "hist_bom_file": "BOM파일", "hist_dwg_count": "도면수",
+        "hist_score": "신뢰도(%)", "hist_grade": "등급",
         "raw_text_expander": "도면에서 추출한 원문 보기 (검증용)",
         "metric_total": "전체", "metric_match": "일치", "metric_review": "확인필요", "metric_bad": "불일치",
         "run_done": "완료: {n}건 비교",
@@ -123,6 +127,10 @@ LANG_DICT = {
         "pdf_missing": "pdfplumber is not installed, so PDF text extraction is unavailable.",
         "llm_check": "Re-check ambiguous materials with LLM",
         "history_empty": "No saved review history.",
+        "history_sheets_error": "Review-history storage (Sheets) connection error — showing this session's history only.",
+        "history_session_only": "Sheets not configured. This list only persists for the current session and will disappear on refresh.",
+        "hist_time": "Time", "hist_bom_file": "BOM File", "hist_dwg_count": "Drawing Count",
+        "hist_score": "Confidence(%)", "hist_grade": "Grade",
         "raw_text_expander": "View extracted drawing text (for verification)",
         "metric_total": "Total", "metric_match": "Match", "metric_review": "Review", "metric_bad": "Mismatch",
         "run_done": "Done: {n} compared",
@@ -459,6 +467,72 @@ def _save_temp_pwds(pwd_dict):
     except Exception as e:
         st.session_state['_sheets_last_error'] = _sanitize_secret_text(f"[저장 실패] {type(e).__name__}: {e}")
         return False
+
+
+# =========================================================
+# 3-1. 검토 이력 Google Sheets 영구 저장 (품번별 상세 결과, append-only 로그)
+#    임시비번용과 별도 시트 사용. 필요한 st.secrets: review_history_sheet_id
+#    (같은 gcp_service_account 재사용)
+# =========================================================
+_REVIEW_HISTORY_WORKSHEET = "review_history"
+_REVIEW_HISTORY_HEADER = [
+    "timestamp", "bom_file", "dwg_count", "part_no", "bom_material",
+    "dwg_material", "match", "score", "grade", "process", "comment",
+]
+
+
+@st.cache_resource(show_spinner=False)
+def _get_review_history_worksheet():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scopes
+    )
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(st.secrets["review_history_sheet_id"])
+    try:
+        ws = sh.worksheet(_REVIEW_HISTORY_WORKSHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=_REVIEW_HISTORY_WORKSHEET, rows=1000, cols=len(_REVIEW_HISTORY_HEADER))
+        ws.update([_REVIEW_HISTORY_HEADER])
+    return ws
+
+
+def _append_review_history(bom_filename, dwg_count, results):
+    """비교 실행 1회 = 품번 개수만큼의 행을 append. clear() 없이 추가만 하므로 데이터 유실 위험 없음."""
+    if not GSPREAD_OK:
+        return False
+    try:
+        ws = _get_review_history_worksheet()
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = [
+            [
+                ts, bom_filename, dwg_count, r["part_no"], r["bom_material"],
+                r["dwg_material"], "O" if r["match"] else "X", f"{r['score']:.1f}",
+                r["grade"], r["process"], r["comment"],
+            ]
+            for r in results
+        ]
+        ws.append_rows(rows, value_input_option="RAW")
+        st.session_state['_history_sheets_error'] = None
+        return True
+    except Exception as e:
+        st.session_state['_history_sheets_error'] = _sanitize_secret_text(f"[이력저장 실패] {type(e).__name__}: {e}")
+        return False
+
+
+def _load_review_history():
+    """저장된 검토 이력 전체를 최신순으로 반환. 실패 시 None (호출부에서 세션 내 요약으로 폴백)."""
+    if not GSPREAD_OK:
+        return None
+    try:
+        ws = _get_review_history_worksheet()
+        records = ws.get_all_records()
+        st.session_state['_history_sheets_error'] = None
+        records.reverse()
+        return records
+    except Exception as e:
+        st.session_state['_history_sheets_error'] = _sanitize_secret_text(f"[이력로드 실패] {type(e).__name__}: {e}")
+        return None
 
 
 # =========================================================
@@ -962,12 +1036,15 @@ with tab1:
                 with st.spinner("..."):
                     results = run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use_llm)
                 st.session_state["last_result"] = results
+                # 세션 내 요약 (Sheets 미설정 시 폴백용)
                 st.session_state["review_history"].append({
                     "시각": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "BOM파일": bom_file.name,
                     "도면수": len(dwg_files),
                     "검토건수": len(results),
                 })
+                # Google Sheets에 품번별 상세 이력 영구 저장 (실패해도 앱은 계속 동작)
+                _append_review_history(bom_file.name, len(dwg_files), results)
                 st.success(t("run_done").format(n=len(results)))
     else:
         st.info(t("no_bom"))
@@ -1049,8 +1126,30 @@ with tab3:
 
 # ---------------- Tab 4: 검토 이력 ----------------
 with tab4:
-    hist = st.session_state["review_history"]
-    if not hist:
-        st.info(t("history_empty"))
+    sheet_hist = _load_review_history()
+    _hist_err = st.session_state.get('_history_sheets_error')
+    if _hist_err:
+        st.warning(f"⚠️ {t('history_sheets_error')}\n\n{_hist_err}")
+    if sheet_hist is not None:
+        if sheet_hist:
+            hist_df = pd.DataFrame(sheet_hist)
+            rename_map = {
+                "timestamp": t("hist_time"), "bom_file": t("hist_bom_file"),
+                "dwg_count": t("hist_dwg_count"), "part_no": t("result_partno"),
+                "bom_material": t("result_bom_mat"), "dwg_material": t("result_dwg_mat"),
+                "match": t("result_match"), "score": t("hist_score"),
+                "grade": t("hist_grade"), "process": t("result_process"),
+                "comment": t("result_comment"),
+            }
+            hist_df = hist_df.rename(columns=rename_map)
+            st.dataframe(hist_df, use_container_width=True)
+        else:
+            st.info(t("history_empty"))
     else:
-        st.dataframe(pd.DataFrame(hist), use_container_width=True)
+        # Sheets 미설정/실패 시 세션 내 요약으로 폴백
+        hist = st.session_state["review_history"]
+        if not hist:
+            st.info(t("history_empty"))
+        else:
+            st.caption(t("history_session_only"))
+            st.dataframe(pd.DataFrame(hist), use_container_width=True)
