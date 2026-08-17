@@ -1574,7 +1574,7 @@ with tab5:
         cad_cols_opt = [t("cad_col_none")] + cad_cols
 
         st.markdown(f"<div class='glass-card'><div class='glass-card-title'>{t('col_map_header')}</div>", unsafe_allow_html=True)
-        cc1, cc2, cc3, cc4 = st.columns(4)
+        cc1, cc2, cc3, cc4, cc5 = st.columns(5)
         with cc1:
             cad_partno_col = st.selectbox(t("cad_col_partno"), cad_cols, key="cad_partno_col")
         with cc2:
@@ -1583,7 +1583,8 @@ with tab5:
             cad_x_col = st.selectbox(t("cad_col_x"), cad_cols_opt, key="cad_x_col")
         with cc4:
             cad_y_col = st.selectbox(t("cad_col_y"), cad_cols_opt, key="cad_y_col")
-        cad_z_col = st.selectbox(t("cad_col_z"), cad_cols_opt, key="cad_z_col")
+        with cc5:
+            cad_z_col = st.selectbox(t("cad_col_z"), cad_cols_opt, key="cad_z_col")
         st.markdown("</div>", unsafe_allow_html=True)
 
         col_map = {
