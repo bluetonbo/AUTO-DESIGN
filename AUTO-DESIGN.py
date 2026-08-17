@@ -34,12 +34,6 @@ except ImportError:
     GSPREAD_OK = False
 
 try:
-    from groq import Groq
-    GROQ_OK = True
-except ImportError:
-    GROQ_OK = False
-
-try:
     from google import genai as gemini_genai
     from google.genai import types as gemini_types
     GEMINI_OK = True
@@ -56,7 +50,6 @@ st.set_page_config(
 )
 
 OWNER_PWD = st.secrets.get("OWNER_PASSWORD", "nt1234")
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 _TEMP_PWD_WORKSHEET = "temp_pwd_store"
 _DEFAULT_TEMP_PWD = "design1234"  # Sheets가 비어있을 때 최초 1회 자동 생성되는 기본 임시 비번 (7일)
@@ -987,27 +980,26 @@ def match_material(bom_mat: str, dwg_mat: str, alias_lookup: dict):
 
 
 def llm_recheck(bom_mat: str, dwg_mat: str) -> str:
-    if not GROQ_OK:
-        st.session_state['_llm_last_error'] = "[LLM 재확인 실패] groq 라이브러리가 설치되지 않았습니다 (requirements.txt 확인)."
+    """애매한 재질 표기 재확인 — Gemini로 통일 (Groq 미사용)."""
+    if not GEMINI_OK:
+        st.session_state['_llm_last_error'] = "[LLM 재확인 실패] google-genai 라이브러리가 설치되지 않았습니다 (requirements.txt 확인)."
         return ""
-    if not GROQ_API_KEY:
-        st.session_state['_llm_last_error'] = "[LLM 재확인 실패] GROQ_API_KEY가 설정되지 않았습니다 (Secrets 확인)."
+    if not GEMINI_API_KEY:
+        st.session_state['_llm_last_error'] = "[LLM 재확인 실패] GEMINI_API_KEY가 설정되지 않았습니다 (Secrets 확인)."
         return ""
     try:
-        client = Groq(api_key=GROQ_API_KEY)
         prompt = (
             f'다음 두 재질 표기가 같은 재질을 의미하는지 판단해줘.\n'
             f'A: "{bom_mat}"\nB: "{dwg_mat}"\n'
             f'"동일" 또는 "다름" 중 하나로만 답하고, 이유를 15자 이내로 덧붙여줘. '
             f'형식: 동일|이유  또는  다름|이유'
         )
-        resp = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=50,
-            temperature=0,
+        client = gemini_genai.Client(api_key=GEMINI_API_KEY)
+        resp = client.models.generate_content(
+            model="gemini-flash-latest",
+            contents=[prompt],
         )
-        content = resp.choices[0].message.content.strip()
+        content = (resp.text or "").strip()
         st.session_state['_llm_last_raw'] = content  # 디버그용: 형식 매칭 여부와 무관하게 원문 항상 기록
         return content
     except Exception as e:
@@ -1448,7 +1440,7 @@ with tab1:
                                         index=guess_col_index(cols, ["가공", "공법", "process"]))
         st.markdown("</div>", unsafe_allow_html=True)
 
-        use_llm = st.checkbox(t("llm_check"), value=bool(GROQ_API_KEY))
+        use_llm = st.checkbox(t("llm_check"), value=bool(GEMINI_API_KEY))
         use_vision = st.checkbox(t("vision_check"), value=False)
         if use_vision and not (GEMINI_OK and GEMINI_API_KEY):
             st.caption(f"⚠️ {t('vision_not_configured')}")
