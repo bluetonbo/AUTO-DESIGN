@@ -987,7 +987,11 @@ def match_material(bom_mat: str, dwg_mat: str, alias_lookup: dict):
 
 
 def llm_recheck(bom_mat: str, dwg_mat: str) -> str:
-    if not (GROQ_OK and GROQ_API_KEY):
+    if not GROQ_OK:
+        st.session_state['_llm_last_error'] = "[LLM 재확인 실패] groq 라이브러리가 설치되지 않았습니다 (requirements.txt 확인)."
+        return ""
+    if not GROQ_API_KEY:
+        st.session_state['_llm_last_error'] = "[LLM 재확인 실패] GROQ_API_KEY가 설정되지 않았습니다 (Secrets 확인)."
         return ""
     try:
         client = Groq(api_key=GROQ_API_KEY)
@@ -1003,7 +1007,9 @@ def llm_recheck(bom_mat: str, dwg_mat: str) -> str:
             max_tokens=50,
             temperature=0,
         )
-        return resp.choices[0].message.content.strip()
+        content = resp.choices[0].message.content.strip()
+        st.session_state['_llm_last_raw'] = content  # 디버그용: 형식 매칭 여부와 무관하게 원문 항상 기록
+        return content
     except Exception as e:
         st.session_state['_llm_last_error'] = _sanitize_secret_text(f"[LLM 재확인 실패] {type(e).__name__}: {e}")
         return ""
@@ -1194,6 +1200,7 @@ def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use
         st.session_state['_vision_last_error'] = None  # 이전 실행의 잔여 에러 메시지 제거
     if use_llm:
         st.session_state['_llm_last_error'] = None
+        st.session_state['_llm_last_raw'] = None
 
     dwg_index = {}
     for f in dwg_files:
@@ -1470,6 +1477,9 @@ with tab1:
         _llm_err = st.session_state.get('_llm_last_error')
         if _llm_err:
             st.warning(f"⚠️ {_llm_err}")
+        _llm_raw = st.session_state.get('_llm_last_raw')
+        if _llm_raw:
+            st.caption(f"🔧 LLM 원문 응답(디버그): {_llm_raw}")
     else:
         st.info(t("no_bom"))
 
