@@ -675,18 +675,20 @@ def llm_recheck(bom_mat: str, dwg_mat: str) -> str:
 # 7. 도면 PDF 텍스트 추출 + 재질 인식
 # =========================================================
 MATERIAL_KEYWORDS = [
-    r"재\s*질\s*[:：]?\s*([A-Za-z0-9\-\.]+)",
-    r"MAT'?L\s*[:：]?\s*([A-Za-z0-9\-\.]+)",
-    r"MATERIAL\s*[:：]?\s*([A-Za-z0-9\-\.]+)",
+    r"재\s*질\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-\.]*)",
+    r"MAT'?L\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-\.]*)",
+    r"MATERIAL\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-\.]*)",
 ]
 PARTNO_KEYWORDS = [
-    r"품\s*번\s*[:：]?\s*([A-Za-z0-9\-]+)",
-    r"PART\s*NO\.?\s*[:：]?\s*([A-Za-z0-9\-]+)",
-    r"DWG\s*NO\.?\s*[:：]?\s*([A-Za-z0-9\-]+)",
+    r"품\s*번\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-]*)",
+    r"도면\s*번호\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-]*)",
+    r"PART\s*NO\.?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-]*)",
+    r"DWG\s*NO\.?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-]*)",
 ]
 
 
 def extract_pdf_text(file) -> str:
+    """페이지 전체 텍스트 (검증용 원문 표시에 사용)"""
     if not PDF_OK:
         return ""
     text = ""
@@ -700,6 +702,30 @@ def extract_pdf_text(file) -> str:
     return text
 
 
+def extract_titleblock_text(file) -> str:
+    """
+    타이틀블록(도면 하단-우측 영역)만 잘라서 텍스트 추출.
+    페이지 전체 텍스트에서 품번/재질을 찾으면, 노트란 등 다른 영역의 텍스트가
+    타이틀블록과 같은 높이(y좌표)에 있을 때 라벨-값이 뒤섞여 오검출될 수 있음
+    (예: "재질:" 바로 다음에 엉뚱한 노트 문구가 값으로 잡히는 경우).
+    KS/ISO 도면 표준상 타이틀블록은 대부분 우하단에 있으므로, 그 영역만 먼저 검색해서
+    이 문제를 줄이고, 못 찾으면 전체 텍스트로 폴백한다.
+    """
+    if not PDF_OK:
+        return ""
+    try:
+        with pdfplumber.open(file) as pdf:
+            page = pdf.pages[-1]
+            w, h = page.width, page.height
+            # 우하단 영역 (타이틀블록이 보통 위치하는 곳). x축 시작점을 60%로 잡아
+            # 좌측 노트란 문장이 경계선에 걸려 한두 글자만 잘려 들어오는 것을 방지.
+            crop_box = (w * 0.6, h * 0.55, w, h)
+            cropped = page.within_bbox(crop_box)
+            return cropped.extract_text() or ""
+    except Exception:
+        return ""
+
+
 def guess_field(text: str, patterns) -> str:
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
@@ -708,14 +734,23 @@ def guess_field(text: str, patterns) -> str:
     return ""
 
 
+def guess_field_prefer_titleblock(titleblock_text: str, full_text: str, patterns) -> str:
+    """타이틀블록 영역에서 먼저 찾고, 없으면 전체 텍스트로 폴백."""
+    val = guess_field(titleblock_text, patterns)
+    if val:
+        return val
+    return guess_field(full_text, patterns)
+
+
 def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use_llm):
     alias_lookup = build_alias_lookup(st.session_state["material_map"])
 
     dwg_index = {}
     for f in dwg_files:
         text = extract_pdf_text(f)
-        pn = guess_field(text, PARTNO_KEYWORDS)
-        mat = guess_field(text, MATERIAL_KEYWORDS)
+        tb_text = extract_titleblock_text(f)
+        pn = guess_field_prefer_titleblock(tb_text, text, PARTNO_KEYWORDS)
+        mat = guess_field_prefer_titleblock(tb_text, text, MATERIAL_KEYWORDS)
         key = normalize(pn) if pn else normalize(f.name.rsplit(".", 1)[0])
         dwg_index[key] = {"material": mat, "raw_text": text, "filename": f.name}
 
