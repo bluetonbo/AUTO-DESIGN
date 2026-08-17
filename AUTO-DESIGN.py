@@ -12,6 +12,7 @@ UI/인프라: JOINT-AI-APP-6 원본 기준으로 통일
 
 import io
 import re
+import json
 import difflib
 from datetime import datetime, timedelta
 
@@ -38,6 +39,13 @@ try:
 except ImportError:
     GROQ_OK = False
 
+try:
+    from google import genai as gemini_genai
+    from google.genai import types as gemini_types
+    GEMINI_OK = True
+except ImportError:
+    GEMINI_OK = False
+
 
 # =========================================================
 # 0. 기본 설정
@@ -49,6 +57,7 @@ st.set_page_config(
 
 OWNER_PWD = st.secrets.get("OWNER_PASSWORD", "nt1234")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 _TEMP_PWD_WORKSHEET = "temp_pwd_store"
 _DEFAULT_TEMP_PWD = "design1234"  # Sheets가 비어있을 때 최초 1회 자동 생성되는 기본 임시 비번 (7일)
 
@@ -87,11 +96,34 @@ LANG_DICT = {
         "export_btn": "결과 엑셀 다운로드",
         "pdf_missing": "pdfplumber가 설치되어 있지 않아 PDF 텍스트 추출을 사용할 수 없습니다. requirements.txt를 확인하세요.",
         "llm_check": "애매한 재질 표기는 LLM으로 재확인",
+        "vision_check": "스캔 도면(이미지 PDF) Vision 인식 사용 (텍스트 없는 도면만 대상, 느림)",
+        "vision_not_configured": "GEMINI_API_KEY가 설정되지 않아 Vision 인식이 비활성 상태입니다.",
+        "vision_badge": "Vision 인식",
         "history_empty": "저장된 검토 이력이 없습니다.",
         "history_sheets_error": "검토 이력 저장소(Sheets) 연결 오류 — 이번 세션 이력만 임시로 표시됩니다.",
         "history_session_only": "Sheets 미설정 상태입니다. 이 목록은 현재 세션에서만 유지되며 새로고침 시 사라집니다.",
         "hist_time": "시각", "hist_bom_file": "BOM파일", "hist_dwg_count": "도면수",
         "hist_score": "신뢰도(%)", "hist_grade": "등급",
+        "tab_cad": "5. 3D 물성치 비교",
+        "cad_upload": "CAD 물성치 엑셀 업로드 (xlsx/csv)",
+        "cad_col_partno": "품번 컬럼", "cad_col_weight": "무게 컬럼 (kg)",
+        "cad_col_x": "가로(X) 컬럼 (mm)", "cad_col_y": "세로(Y) 컬럼 (mm)", "cad_col_z": "높이(Z) 컬럼 (mm)",
+        "cad_col_none": "사용 안 함",
+        "cad_compare_bom": "BOM 기준값과 비교",
+        "cad_compare_prev": "이전 리비전과 비교 (Sheets 이력 기반)",
+        "cad_compare_dwg": "도면 표기 치수와 비교 (1번 탭 실행 필요, 타이틀블록에 명시된 값만 인식)",
+        "cad_no_dwg_run": "1번 탭에서 비교 실행을 먼저 하셔야 도면 치수를 사용할 수 있습니다.",
+        "cad_bom_need_cols": "BOM 기준값 컬럼 매핑 (BOM에 해당 컬럼이 없으면 '사용 안 함')",
+        "cad_tolerance": "허용오차 (%)",
+        "cad_run_btn": "물성치 비교 실행",
+        "cad_no_file": "CAD 물성치 파일을 먼저 업로드하세요.",
+        "cad_no_bom": "BOM 기준값과 비교하려면 1번 탭에서 BOM을 먼저 업로드하세요.",
+        "cad_no_checks": "선택된 비교 대상이 없습니다 (BOM 비교 또는 이전 리비전 비교 중 하나 이상 선택하세요).",
+        "cad_result_title": "물성치 비교 결과",
+        "cad_overall": "종합 신뢰도",
+        "cad_no_prev": "이전 리비전 이력 없음 (최초 업로드)",
+        "cad_first_upload_note": "이번 업로드 값은 다음 비교를 위해 이력에 저장됩니다.",
+        "cad_saved_ok": "물성치 이력 저장 완료.",
         "raw_text_expander": "도면에서 추출한 원문 보기 (검증용)",
         "metric_total": "전체", "metric_match": "일치", "metric_review": "확인필요", "metric_bad": "불일치",
         "run_done": "완료: {n}건 비교",
@@ -126,11 +158,34 @@ LANG_DICT = {
         "export_btn": "Download result (Excel)",
         "pdf_missing": "pdfplumber is not installed, so PDF text extraction is unavailable.",
         "llm_check": "Re-check ambiguous materials with LLM",
+        "vision_check": "Use Vision recognition for scanned (image) drawings (text-less drawings only, slow)",
+        "vision_not_configured": "GEMINI_API_KEY is not set, so Vision recognition is disabled.",
+        "vision_badge": "Vision-recognized",
         "history_empty": "No saved review history.",
         "history_sheets_error": "Review-history storage (Sheets) connection error — showing this session's history only.",
         "history_session_only": "Sheets not configured. This list only persists for the current session and will disappear on refresh.",
         "hist_time": "Time", "hist_bom_file": "BOM File", "hist_dwg_count": "Drawing Count",
         "hist_score": "Confidence(%)", "hist_grade": "Grade",
+        "tab_cad": "5. 3D Property Compare",
+        "cad_upload": "Upload CAD property Excel (xlsx/csv)",
+        "cad_col_partno": "Part No. column", "cad_col_weight": "Weight column (kg)",
+        "cad_col_x": "Width(X) column (mm)", "cad_col_y": "Depth(Y) column (mm)", "cad_col_z": "Height(Z) column (mm)",
+        "cad_col_none": "Not used",
+        "cad_compare_bom": "Compare vs BOM reference values",
+        "cad_compare_prev": "Compare vs previous revision (Sheets history)",
+        "cad_compare_dwg": "Compare vs drawing-labeled dimensions (requires tab-1 run; only explicit title-block values are recognized)",
+        "cad_no_dwg_run": "Run the comparison in tab 1 first to use drawing dimensions.",
+        "cad_bom_need_cols": "BOM reference column mapping (choose 'Not used' if BOM lacks that column)",
+        "cad_tolerance": "Tolerance (%)",
+        "cad_run_btn": "Run Property Comparison",
+        "cad_no_file": "Please upload a CAD property file first.",
+        "cad_no_bom": "Upload a BOM in tab 1 first to compare against BOM reference values.",
+        "cad_no_checks": "No comparison target selected (pick at least one of BOM or previous-revision compare).",
+        "cad_result_title": "Property Comparison Result",
+        "cad_overall": "Overall Confidence",
+        "cad_no_prev": "No previous revision history (first upload)",
+        "cad_first_upload_note": "This upload's values will be saved to history for future comparisons.",
+        "cad_saved_ok": "Property history saved.",
         "raw_text_expander": "View extracted drawing text (for verification)",
         "metric_total": "Total", "metric_match": "Match", "metric_review": "Review", "metric_bad": "Mismatch",
         "run_done": "Done: {n} compared",
@@ -536,6 +591,192 @@ def _load_review_history():
 
 
 # =========================================================
+# 3-2. 3D 물성치(CAD export) 이력 저장 — 검토 이력과 같은 스프레드시트, 별도 워크시트 사용
+#      "이전 리비전과 비교"를 위해 매 업로드 값을 append-only 로 쌓아둔다.
+# =========================================================
+_CAD_LOG_WORKSHEET = "cad_property_log"
+_CAD_LOG_HEADER = ["timestamp", "part_no", "weight_kg", "dim_x_mm", "dim_y_mm", "dim_z_mm", "cad_file"]
+
+
+@st.cache_resource(show_spinner=False)
+def _get_cad_log_worksheet():
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scopes
+    )
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(st.secrets["review_history_sheet_id"])
+    try:
+        ws = sh.worksheet(_CAD_LOG_WORKSHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=_CAD_LOG_WORKSHEET, rows=2000, cols=len(_CAD_LOG_HEADER))
+        ws.update([_CAD_LOG_HEADER])
+    return ws
+
+
+def _load_cad_log():
+    if not GSPREAD_OK:
+        return None
+    try:
+        ws = _get_cad_log_worksheet()
+        records = ws.get_all_records()
+        st.session_state['_cad_sheets_error'] = None
+        return records
+    except Exception as e:
+        st.session_state['_cad_sheets_error'] = _sanitize_secret_text(f"[CAD 이력로드 실패] {type(e).__name__}: {e}")
+        return None
+
+
+def _append_cad_log(cad_filename, cad_rows):
+    """cad_rows: [{part_no, weight_kg, dim_x_mm, dim_y_mm, dim_z_mm}, ...]"""
+    if not GSPREAD_OK:
+        return False
+    try:
+        ws = _get_cad_log_worksheet()
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = [
+            [ts, r["part_no"], r.get("weight_kg", ""), r.get("dim_x_mm", ""),
+             r.get("dim_y_mm", ""), r.get("dim_z_mm", ""), cad_filename]
+            for r in cad_rows
+        ]
+        ws.append_rows(rows, value_input_option="RAW")
+        st.session_state['_cad_sheets_error'] = None
+        return True
+    except Exception as e:
+        st.session_state['_cad_sheets_error'] = _sanitize_secret_text(f"[CAD 이력저장 실패] {type(e).__name__}: {e}")
+        return False
+
+
+def find_previous_cad_entry(part_no, log_records, before_timestamp=None):
+    """같은 품번의 로그 중 가장 최근 것 1건 반환 (before_timestamp 이전 것만, 없으면 전체 중 최신)"""
+    if not log_records:
+        return None
+    candidates = [r for r in log_records if str(r.get("part_no", "")).strip() == part_no]
+    if before_timestamp:
+        candidates = [r for r in candidates if str(r.get("timestamp", "")) < before_timestamp]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda r: str(r.get("timestamp", "")))
+    return candidates[-1]
+
+
+def _to_float(v):
+    try:
+        if v is None or v == "":
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def compare_cad_property(current_val, ref_val, tolerance_pct):
+    """
+    수치 비교 -> (일치여부, 신뢰도점수 0~100, 차이%, 코멘트)
+    허용오차 이내면 100점, 벗어난 정도에 비례해 감점 (JOINT 배지 4단계와 동일한 점수 스케일 사용)
+    """
+    if current_val is None or ref_val is None:
+        return None, None, None, "값 없음"
+    if ref_val == 0:
+        diff_pct = 0.0 if current_val == 0 else 100.0
+    else:
+        diff_pct = abs(current_val - ref_val) / abs(ref_val) * 100
+    if diff_pct <= tolerance_pct:
+        score = 100.0 - (diff_pct / max(tolerance_pct, 0.01)) * 20.0  # 허용범위 내에서는 80~100점
+        score = max(80.0, min(100.0, score))
+        match = True
+        comment = f"허용오차({tolerance_pct}%) 이내, 차이 {diff_pct:.1f}%"
+    else:
+        # 허용오차 초과분에 비례해 감점 (초과분 5%p당 -20점)
+        over = diff_pct - tolerance_pct
+        score = max(0.0, 80.0 - over * 4.0)
+        match = False
+        comment = f"허용오차({tolerance_pct}%) 초과, 차이 {diff_pct:.1f}%"
+    return match, score, diff_pct, comment
+
+
+def run_cad_comparison(cad_df, col_map, bom_df, bom_col_map, tolerance_pct, compare_bom, compare_prev, compare_dwg=False, dwg_dim_index=None):
+    """
+    col_map: {'part_no':col, 'weight':col_or_None, 'x':col_or_None, 'y':col_or_None, 'z':col_or_None}
+    bom_col_map: {'part_no':col, 'weight':col_or_None, 'x':col_or_None, 'y':col_or_None, 'z':col_or_None}
+    dwg_dim_index: {normalized_part_no: {"dims": {"x","y","z","weight"}, ...}} — run_comparison()에서 채워짐 (1번 탭 실행 결과)
+    """
+    prev_log = _load_cad_log() if compare_prev else None
+    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    bom_lookup = {}
+    if compare_bom and bom_df is not None and bom_col_map.get("part_no"):
+        for _, brow in bom_df.iterrows():
+            bpn = normalize(str(brow.get(bom_col_map["part_no"], "")))
+            if not bpn:
+                continue
+            bom_lookup[bpn] = {
+                "weight": _to_float(brow.get(bom_col_map.get("weight"))) if bom_col_map.get("weight") else None,
+                "x": _to_float(brow.get(bom_col_map.get("x"))) if bom_col_map.get("x") else None,
+                "y": _to_float(brow.get(bom_col_map.get("y"))) if bom_col_map.get("y") else None,
+                "z": _to_float(brow.get(bom_col_map.get("z"))) if bom_col_map.get("z") else None,
+            }
+
+    results = []
+    log_rows = []
+    for _, row in cad_df.iterrows():
+        part_no = str(row.get(col_map["part_no"], "")).strip()
+        if not part_no:
+            continue
+        cur = {
+            "weight": _to_float(row.get(col_map.get("weight"))) if col_map.get("weight") else None,
+            "x": _to_float(row.get(col_map.get("x"))) if col_map.get("x") else None,
+            "y": _to_float(row.get(col_map.get("y"))) if col_map.get("y") else None,
+            "z": _to_float(row.get(col_map.get("z"))) if col_map.get("z") else None,
+        }
+        log_rows.append({
+            "part_no": part_no, "weight_kg": cur["weight"] if cur["weight"] is not None else "",
+            "dim_x_mm": cur["x"] if cur["x"] is not None else "",
+            "dim_y_mm": cur["y"] if cur["y"] is not None else "",
+            "dim_z_mm": cur["z"] if cur["z"] is not None else "",
+        })
+
+        checks = []
+        # vs BOM 기준값
+        if compare_bom:
+            bref = bom_lookup.get(normalize(part_no))
+            for dim_key, dim_label in [("weight", "무게"), ("x", "가로"), ("y", "세로"), ("z", "높이")]:
+                ref_val = bref.get(dim_key) if bref else None
+                match, score, diff_pct, comment = compare_cad_property(cur[dim_key], ref_val, tolerance_pct)
+                if score is not None:
+                    checks.append({"source": "BOM", "dim": dim_label, "match": match, "score": score,
+                                    "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
+        # vs 이전 리비전
+        if compare_prev:
+            prev_entry = find_previous_cad_entry(part_no, prev_log, before_timestamp=now_ts) if prev_log is not None else None
+            for dim_key, dim_label, log_key in [
+                ("weight", "무게", "weight_kg"), ("x", "가로", "dim_x_mm"),
+                ("y", "세로", "dim_y_mm"), ("z", "높이", "dim_z_mm"),
+            ]:
+                ref_val = _to_float(prev_entry.get(log_key)) if prev_entry else None
+                match, score, diff_pct, comment = compare_cad_property(cur[dim_key], ref_val, tolerance_pct)
+                if score is not None:
+                    checks.append({"source": "PREV", "dim": dim_label, "match": match, "score": score,
+                                    "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
+        # vs 도면 표기 치수 (타이틀블록/노트란에 명시적으로 라벨링된 요약값만 인식됨 — 1번 탭 실행 필요)
+        if compare_dwg:
+            dwg_entry = (dwg_dim_index or {}).get(normalize(part_no))
+            dwg_dims = dwg_entry.get("dims") if dwg_entry else None
+            for dim_key, dim_label in [("weight", "무게"), ("x", "가로"), ("y", "세로"), ("z", "높이")]:
+                ref_val = dwg_dims.get(dim_key) if dwg_dims else None
+                match, score, diff_pct, comment = compare_cad_property(cur[dim_key], ref_val, tolerance_pct)
+                if score is not None:
+                    checks.append({"source": "DWG", "dim": dim_label, "match": match, "score": score,
+                                    "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
+
+        overall_score = (sum(c["score"] for c in checks) / len(checks)) if checks else None
+        results.append({
+            "part_no": part_no, "current": cur, "checks": checks, "overall_score": overall_score,
+        })
+
+    return results, log_rows
+
+
+# =========================================================
 # 4. 신뢰도 배지 (JOINT 원본과 동일한 4단계 색상 체계)
 # =========================================================
 def render_confidence_badge(score, label):
@@ -759,6 +1000,18 @@ PARTNO_KEYWORDS = [
     r"PART\s*NO\.?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-]*)",
     r"DWG\s*NO\.?\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9\-]*)",
 ]
+# 도면 표기 치수/중량 — 벡터 좌표 기반 자동 치수 인식은 범위 밖(스코프 아웃).
+# "치수(WxDxH): 120 x 90 x 40" 처럼 타이틀블록/노트란에 명시적으로 라벨링된 요약값만 인식.
+DIM_SUMMARY_KEYWORDS = [
+    r"치\s*수\s*\(?\s*W\s*x\s*D\s*x\s*H\s*\)?\s*[:：]?\s*([0-9.]+)\s*[xX×]\s*([0-9.]+)\s*[xX×]\s*([0-9.]+)",
+    r"DIM(?:ENSION)?S?\s*\(?\s*W\s*x\s*D\s*x\s*H\s*\)?\s*[:：]?\s*([0-9.]+)\s*[xX×]\s*([0-9.]+)\s*[xX×]\s*([0-9.]+)",
+    r"치\s*수\s*[:：]?\s*([0-9.]+)\s*[xX×]\s*([0-9.]+)\s*[xX×]\s*([0-9.]+)",
+]
+WEIGHT_KEYWORDS = [
+    r"중\s*량\s*[:：]?\s*([0-9]+\.?[0-9]*)\s*(?:kg|KG)?",
+    r"무\s*게\s*[:：]?\s*([0-9]+\.?[0-9]*)\s*(?:kg|KG)?",
+    r"WEIGHT\s*[:：]?\s*([0-9]+\.?[0-9]*)\s*(?:kg|KG)?",
+]
 
 
 def extract_pdf_text(file) -> str:
@@ -816,7 +1069,98 @@ def guess_field_prefer_titleblock(titleblock_text: str, full_text: str, patterns
     return guess_field(full_text, patterns)
 
 
-def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use_llm):
+def extract_drawing_dims(titleblock_text: str, full_text: str):
+    """도면 텍스트에서 '치수(WxDxH)' / '중량' 요약 표기를 찾아 dict로 반환.
+    못 찾으면 해당 키는 None (자동 벡터 치수 인식은 범위 밖)."""
+    result = {"x": None, "y": None, "z": None, "weight": None}
+    for source in (titleblock_text, full_text):
+        if result["x"] is not None:
+            break
+        for p in DIM_SUMMARY_KEYWORDS:
+            m = re.search(p, source, re.IGNORECASE)
+            if m:
+                try:
+                    result["x"] = float(m.group(1))
+                    result["y"] = float(m.group(2))
+                    result["z"] = float(m.group(3))
+                except ValueError:
+                    pass
+                break
+    for source in (titleblock_text, full_text):
+        if result["weight"] is not None:
+            break
+        for p in WEIGHT_KEYWORDS:
+            m = re.search(p, source, re.IGNORECASE)
+            if m:
+                try:
+                    result["weight"] = float(m.group(1))
+                except ValueError:
+                    pass
+                break
+    return result
+
+
+def is_probably_scanned(text: str) -> bool:
+    """텍스트 레이어가 거의/전혀 없으면 스캔본(이미지 PDF)일 가능성이 높다고 판단."""
+    return len((text or "").strip()) < 20
+
+
+def rasterize_pdf_first_page(file, resolution=150):
+    """스캔 도면을 Vision 모델에 보내기 위해 첫 페이지를 이미지(PNG bytes)로 렌더링."""
+    if not PDF_OK:
+        return None
+    try:
+        with pdfplumber.open(file) as pdf:
+            page = pdf.pages[0]
+            img = page.to_image(resolution=resolution)
+            buf = io.BytesIO()
+            img.original.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception:
+        return None
+
+
+_VISION_PROMPT = (
+    "You are reading a mechanical engineering drawing (도면) title block. "
+    "Extract these fields if visible: part number (품번/도면번호/PART NO/DWG NO), "
+    "material (재질/MATERIAL), overall dimensions width x depth x height in mm if shown as a single "
+    "summary value (not individual dimension lines), and weight in kg if shown. "
+    "Respond ONLY with compact JSON, no markdown fences, no explanation, in this exact shape: "
+    '{"part_no": "<string or null>", "material": "<string or null>", '
+    '"dim_x_mm": <number or null>, "dim_y_mm": <number or null>, "dim_z_mm": <number or null>, '
+    '"weight_kg": <number or null>}'
+)
+
+
+def vision_extract_fields(image_bytes):
+    """
+    스캔(이미지) 도면에서 Gemini Vision(google-genai SDK)으로 품번/재질/치수/중량을 추출.
+    실패 시 빈 dict 반환 (앱은 계속 동작, 해당 파일은 미검출로 처리됨).
+    """
+    if not (GEMINI_OK and GEMINI_API_KEY and image_bytes):
+        return {}
+    try:
+        client = gemini_genai.Client(api_key=GEMINI_API_KEY)
+        resp = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                _VISION_PROMPT,
+                gemini_types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+            ],
+            config=gemini_types.GenerateContentConfig(
+                temperature=0, response_mime_type="application/json",
+            ),
+        )
+        raw = (resp.text or "").strip()
+        raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        st.session_state['_vision_last_error'] = _sanitize_secret_text(f"[Vision 인식 실패] {type(e).__name__}: {e}")
+        return {}
+
+
+def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use_llm, use_vision=False):
     alias_lookup = build_alias_lookup(st.session_state["material_map"])
 
     dwg_index = {}
@@ -825,8 +1169,32 @@ def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use
         tb_text = extract_titleblock_text(f)
         pn = guess_field_prefer_titleblock(tb_text, text, PARTNO_KEYWORDS)
         mat = guess_field_prefer_titleblock(tb_text, text, MATERIAL_KEYWORDS)
+        dims = extract_drawing_dims(tb_text, text)
+        via_vision = False
+
+        # 텍스트 레이어가 없는(=스캔본으로 추정되는) 도면은 Vision으로 재시도
+        if use_vision and not pn and not mat and is_probably_scanned(text):
+            f.seek(0) if hasattr(f, "seek") else None
+            img_bytes = rasterize_pdf_first_page(f)
+            f.seek(0) if hasattr(f, "seek") else None
+            v = vision_extract_fields(img_bytes)
+            if v:
+                pn = pn or (v.get("part_no") or "")
+                mat = mat or (v.get("material") or "")
+                if dims.get("x") is None and v.get("dim_x_mm") is not None:
+                    dims = {
+                        "x": v.get("dim_x_mm"), "y": v.get("dim_y_mm"),
+                        "z": v.get("dim_z_mm"), "weight": v.get("weight_kg"),
+                    }
+                elif dims.get("weight") is None and v.get("weight_kg") is not None:
+                    dims["weight"] = v.get("weight_kg")
+                via_vision = True
+
         key = normalize(pn) if pn else normalize(f.name.rsplit(".", 1)[0])
-        dwg_index[key] = {"material": mat, "raw_text": text, "filename": f.name}
+        dwg_index[key] = {"material": mat, "raw_text": text, "filename": f.name, "dims": dims, "via_vision": via_vision}
+
+    # 5단계(3D 물성치 비교) 탭에서 "도면 표기 치수와 비교"에 재사용할 수 있도록 세션에 저장
+    st.session_state["dwg_dim_index"] = dwg_index
 
     results = []
     for _, row in bom_df.iterrows():
@@ -859,6 +1227,7 @@ def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use
             "comment": comment,
             "raw_text": dwg_entry.get("raw_text", ""),
             "dwg_filename": dwg_entry.get("filename", ""),
+            "via_vision": dwg_entry.get("via_vision", False),
         })
     return results
 
@@ -989,7 +1358,9 @@ with st.sidebar:
 # =========================================================
 st.markdown(f"<h1 style='margin-bottom:20px; font-size:1.8rem;'>{t('title')}</h1>", unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs([t("tab_upload"), t("tab_map"), t("tab_result"), t("tab_history")])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [t("tab_upload"), t("tab_map"), t("tab_result"), t("tab_history"), t("tab_cad")]
+)
 
 # ---------------- Tab 1: 업로드 ----------------
 with tab1:
@@ -1012,6 +1383,8 @@ with tab1:
             else:
                 bom_df = pd.read_excel(bom_file)
             st.dataframe(bom_df.head(20), use_container_width=True)
+            st.session_state["bom_df"] = bom_df
+            st.session_state["bom_file_name"] = bom_file.name
         except Exception as e:
             st.error(_sanitize_secret_text(f"BOM 파일을 읽는 중 오류: {e}"))
 
@@ -1028,13 +1401,16 @@ with tab1:
         st.markdown("</div>", unsafe_allow_html=True)
 
         use_llm = st.checkbox(t("llm_check"), value=bool(GROQ_API_KEY))
+        use_vision = st.checkbox(t("vision_check"), value=False)
+        if use_vision and not (GEMINI_OK and GEMINI_API_KEY):
+            st.caption(f"⚠️ {t('vision_not_configured')}")
 
         if st.button(t("run_btn"), type="primary"):
             if not dwg_files:
                 st.warning(t("no_dwg"))
             else:
                 with st.spinner("..."):
-                    results = run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use_llm)
+                    results = run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use_llm, use_vision=use_vision)
                 st.session_state["last_result"] = results
                 # 세션 내 요약 (Sheets 미설정 시 폴백용)
                 st.session_state["review_history"].append({
@@ -1082,9 +1458,14 @@ with tab3:
         st.markdown("---")
 
         for r in results:
+            vision_tag = (
+                f"&nbsp;<span style='background:#1a2e4a;color:#7db8ff;font-size:0.68rem;"
+                f"font-weight:700;padding:2px 7px;border-radius:8px;'>👁 {t('vision_badge')}</span>"
+                if r.get("via_vision") else ""
+            )
             st.markdown(
                 f"""<div class='glass-card'>
-  <div class='glass-card-title'>{t('result_partno')}: {r['part_no']}</div>
+  <div class='glass-card-title'>{t('result_partno')}: {r['part_no']}{vision_tag}</div>
   {t('result_bom_mat')}: <code>{r['bom_material']}</code>
   &nbsp;&nbsp;→&nbsp;&nbsp;
   {t('result_dwg_mat')}: <code>{r['dwg_material']}</code>
@@ -1153,3 +1534,130 @@ with tab4:
         else:
             st.caption(t("history_session_only"))
             st.dataframe(pd.DataFrame(hist), use_container_width=True)
+
+# ---------------- Tab 5: 3D 물성치 비교 ----------------
+with tab5:
+    st.markdown(f"<div class='glass-card'><div class='glass-card-title'>{t('cad_upload')}</div>", unsafe_allow_html=True)
+    cad_file = st.file_uploader(t("cad_upload"), type=["xlsx", "csv"], label_visibility="collapsed", key="cad_file_uploader")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    cad_df = None
+    if cad_file is not None:
+        try:
+            if cad_file.name.lower().endswith(".csv"):
+                cad_df = pd.read_csv(cad_file)
+            else:
+                cad_df = pd.read_excel(cad_file)
+            st.dataframe(cad_df.head(20), use_container_width=True)
+        except Exception as e:
+            st.error(_sanitize_secret_text(f"CAD 파일을 읽는 중 오류: {e}"))
+
+    if cad_df is None:
+        st.info(t("cad_no_file"))
+    else:
+        cad_cols = list(cad_df.columns)
+        cad_cols_opt = [t("cad_col_none")] + cad_cols
+
+        st.markdown(f"<div class='glass-card'><div class='glass-card-title'>{t('col_map_header')}</div>", unsafe_allow_html=True)
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        with cc1:
+            cad_partno_col = st.selectbox(t("cad_col_partno"), cad_cols, key="cad_partno_col")
+        with cc2:
+            cad_weight_col = st.selectbox(t("cad_col_weight"), cad_cols_opt, key="cad_weight_col")
+        with cc3:
+            cad_x_col = st.selectbox(t("cad_col_x"), cad_cols_opt, key="cad_x_col")
+        with cc4:
+            cad_y_col = st.selectbox(t("cad_col_y"), cad_cols_opt, key="cad_y_col")
+        cad_z_col = st.selectbox(t("cad_col_z"), cad_cols_opt, key="cad_z_col")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        col_map = {
+            "part_no": cad_partno_col,
+            "weight": None if cad_weight_col == t("cad_col_none") else cad_weight_col,
+            "x": None if cad_x_col == t("cad_col_none") else cad_x_col,
+            "y": None if cad_y_col == t("cad_col_none") else cad_y_col,
+            "z": None if cad_z_col == t("cad_col_none") else cad_z_col,
+        }
+
+        compare_bom = st.checkbox(t("cad_compare_bom"), value=True)
+        compare_prev = st.checkbox(t("cad_compare_prev"), value=True)
+        compare_dwg = st.checkbox(t("cad_compare_dwg"), value=False)
+        if compare_dwg and not st.session_state.get("dwg_dim_index"):
+            st.warning(t("cad_no_dwg_run"))
+
+        bom_col_map = {"part_no": None, "weight": None, "x": None, "y": None, "z": None}
+        session_bom_df = st.session_state.get("bom_df")
+        if compare_bom:
+            if session_bom_df is None:
+                st.warning(t("cad_no_bom"))
+                compare_bom = False
+            else:
+                st.caption(t("cad_bom_need_cols"))
+                bc1, bc2, bc3, bc4, bc5 = st.columns(5)
+                bom_cols = list(session_bom_df.columns)
+                bom_cols_opt = [t("cad_col_none")] + bom_cols
+                with bc1:
+                    b_pn = st.selectbox(t("cad_col_partno"), bom_cols, key="bom_ref_partno_col")
+                with bc2:
+                    b_w = st.selectbox(t("cad_col_weight"), bom_cols_opt, key="bom_ref_weight_col")
+                with bc3:
+                    b_x = st.selectbox(t("cad_col_x"), bom_cols_opt, key="bom_ref_x_col")
+                with bc4:
+                    b_y = st.selectbox(t("cad_col_y"), bom_cols_opt, key="bom_ref_y_col")
+                with bc5:
+                    b_z = st.selectbox(t("cad_col_z"), bom_cols_opt, key="bom_ref_z_col")
+                bom_col_map = {
+                    "part_no": b_pn,
+                    "weight": None if b_w == t("cad_col_none") else b_w,
+                    "x": None if b_x == t("cad_col_none") else b_x,
+                    "y": None if b_y == t("cad_col_none") else b_y,
+                    "z": None if b_z == t("cad_col_none") else b_z,
+                }
+
+        tolerance_pct = st.number_input(t("cad_tolerance"), min_value=0.1, max_value=50.0, value=5.0, step=0.5)
+
+        if st.button(t("cad_run_btn"), type="primary"):
+            if not compare_bom and not compare_prev and not compare_dwg:
+                st.warning(t("cad_no_checks"))
+            else:
+                with st.spinner("..."):
+                    cad_results, log_rows = run_cad_comparison(
+                        cad_df, col_map, session_bom_df, bom_col_map,
+                        tolerance_pct, compare_bom, compare_prev,
+                        compare_dwg=compare_dwg, dwg_dim_index=st.session_state.get("dwg_dim_index"),
+                    )
+                    _cad_saved = _append_cad_log(cad_file.name, log_rows)
+                st.session_state["last_cad_result"] = cad_results
+                if _cad_saved:
+                    st.success(t("cad_saved_ok"))
+
+        cad_sheets_err = st.session_state.get('_cad_sheets_error')
+        if cad_sheets_err:
+            st.caption(f"⚠️ {cad_sheets_err}")
+
+        cad_results = st.session_state.get("last_cad_result")
+        if cad_results:
+            st.markdown("---")
+            st.markdown(f"### {t('cad_result_title')}")
+            for r in cad_results:
+                st.markdown(
+                    f"<div class='glass-card'><div class='glass-card-title'>{t('result_partno')}: {r['part_no']}</div>",
+                    unsafe_allow_html=True,
+                )
+                if not r["checks"]:
+                    st.caption(t("cad_no_prev") if compare_prev else t("cad_no_checks"))
+                else:
+                    for c in r["checks"]:
+                        _src_map_ko = {"BOM": "BOM", "PREV": "이전 리비전", "DWG": "도면 표기"}
+                        _src_map_en = {"BOM": "BOM", "PREV": "Prev Rev", "DWG": "Drawing"}
+                        src_label = (_src_map_ko if st.session_state["lang"] == "KO" else _src_map_en)[c["source"]]
+                        cur_str = f"{c['cur']:.2f}" if c['cur'] is not None else "-"
+                        ref_str = f"{c['ref']:.2f}" if c['ref'] is not None else "-"
+                        st.markdown(
+                            f"[{src_label}] {c['dim']}: <code>{cur_str}</code> ↔ <code>{ref_str}</code> — {c['comment']}",
+                            unsafe_allow_html=True,
+                        )
+                st.markdown("</div>", unsafe_allow_html=True)
+                if r["overall_score"] is not None:
+                    render_confidence_badge(r["overall_score"], t("cad_overall"))
+                st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
