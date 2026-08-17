@@ -921,6 +921,25 @@ if not st.session_state.authenticated:
 # =========================================================
 # 6. 재질 매칭 엔진 (DWG-BOM 고유 로직 — 변경 없음)
 # =========================================================
+def guess_col_index(columns, keywords, offset=0, default=0):
+    """
+    컬럼 매핑 셀렉트박스의 기본 선택값을 자동으로 맞춰주는 헬퍼.
+    컬럼명에 keywords 중 하나가 포함되어 있으면 그 위치(+offset)를 반환, 없으면 default.
+    offset은 "사용 안 함" 같은 항목이 리스트 맨 앞에 추가된 경우(+1) 보정용.
+    "x"/"y"/"z" 같은 한 글자 영문 키워드는 오검출(예: "Taxonomy")을 막기 위해 완전 일치만 인정.
+    """
+    for i, c in enumerate(columns):
+        cs = str(c).lower().strip()
+        for kw in keywords:
+            kw = kw.lower()
+            if len(kw) == 1 and kw.isalpha():
+                if cs == kw or cs.startswith(kw + "(") or cs.startswith(kw + " "):
+                    return i + offset
+            elif kw in cs:
+                return i + offset
+    return default
+
+
 def normalize(s: str) -> str:
     if not isinstance(s, str):
         return ""
@@ -1404,11 +1423,14 @@ with tab1:
         c1, c2, c3 = st.columns(3)
         cols = list(bom_df.columns)
         with c1:
-            partno_col = st.selectbox(t("col_partno"), cols, key="partno_col")
+            partno_col = st.selectbox(t("col_partno"), cols, key="partno_col",
+                                       index=guess_col_index(cols, ["품번", "part no", "partno", "도면번호"]))
         with c2:
-            material_col = st.selectbox(t("col_material"), cols, key="material_col")
+            material_col = st.selectbox(t("col_material"), cols, key="material_col",
+                                         index=guess_col_index(cols, ["재질", "material", "mat'l"]))
         with c3:
-            process_col = st.selectbox(t("col_process"), cols, key="process_col")
+            process_col = st.selectbox(t("col_process"), cols, key="process_col",
+                                        index=guess_col_index(cols, ["가공", "공법", "process"]))
         st.markdown("</div>", unsafe_allow_html=True)
 
         use_llm = st.checkbox(t("llm_check"), value=bool(GROQ_API_KEY))
@@ -1576,15 +1598,20 @@ with tab5:
         st.markdown(f"<div class='glass-card'><div class='glass-card-title'>{t('col_map_header')}</div>", unsafe_allow_html=True)
         cc1, cc2, cc3, cc4, cc5 = st.columns(5)
         with cc1:
-            cad_partno_col = st.selectbox(t("cad_col_partno"), cad_cols, key="cad_partno_col")
+            cad_partno_col = st.selectbox(t("cad_col_partno"), cad_cols, key="cad_partno_col",
+                                           index=guess_col_index(cad_cols, ["품번", "part no", "partno"]))
         with cc2:
-            cad_weight_col = st.selectbox(t("cad_col_weight"), cad_cols_opt, key="cad_weight_col")
+            cad_weight_col = st.selectbox(t("cad_col_weight"), cad_cols_opt, key="cad_weight_col",
+                                           index=guess_col_index(cad_cols, ["무게", "weight"], offset=1))
         with cc3:
-            cad_x_col = st.selectbox(t("cad_col_x"), cad_cols_opt, key="cad_x_col")
+            cad_x_col = st.selectbox(t("cad_col_x"), cad_cols_opt, key="cad_x_col",
+                                      index=guess_col_index(cad_cols, ["가로", "width", "x"], offset=1))
         with cc4:
-            cad_y_col = st.selectbox(t("cad_col_y"), cad_cols_opt, key="cad_y_col")
+            cad_y_col = st.selectbox(t("cad_col_y"), cad_cols_opt, key="cad_y_col",
+                                      index=guess_col_index(cad_cols, ["세로", "depth", "y"], offset=1))
         with cc5:
-            cad_z_col = st.selectbox(t("cad_col_z"), cad_cols_opt, key="cad_z_col")
+            cad_z_col = st.selectbox(t("cad_col_z"), cad_cols_opt, key="cad_z_col",
+                                      index=guess_col_index(cad_cols, ["높이", "height", "z"], offset=1))
         st.markdown("</div>", unsafe_allow_html=True)
 
         col_map = {
@@ -1613,15 +1640,20 @@ with tab5:
                 bom_cols = list(session_bom_df.columns)
                 bom_cols_opt = [t("cad_col_none")] + bom_cols
                 with bc1:
-                    b_pn = st.selectbox(t("cad_col_partno"), bom_cols, key="bom_ref_partno_col")
+                    b_pn = st.selectbox(t("cad_col_partno"), bom_cols, key="bom_ref_partno_col",
+                                         index=guess_col_index(bom_cols, ["품번", "part no", "partno"]))
                 with bc2:
-                    b_w = st.selectbox(t("cad_col_weight"), bom_cols_opt, key="bom_ref_weight_col")
+                    b_w = st.selectbox(t("cad_col_weight"), bom_cols_opt, key="bom_ref_weight_col",
+                                        index=guess_col_index(bom_cols, ["기준무게", "무게", "weight"], offset=1))
                 with bc3:
-                    b_x = st.selectbox(t("cad_col_x"), bom_cols_opt, key="bom_ref_x_col")
+                    b_x = st.selectbox(t("cad_col_x"), bom_cols_opt, key="bom_ref_x_col",
+                                        index=guess_col_index(bom_cols, ["기준가로", "가로", "width", "x"], offset=1))
                 with bc4:
-                    b_y = st.selectbox(t("cad_col_y"), bom_cols_opt, key="bom_ref_y_col")
+                    b_y = st.selectbox(t("cad_col_y"), bom_cols_opt, key="bom_ref_y_col",
+                                        index=guess_col_index(bom_cols, ["기준세로", "세로", "depth", "y"], offset=1))
                 with bc5:
-                    b_z = st.selectbox(t("cad_col_z"), bom_cols_opt, key="bom_ref_z_col")
+                    b_z = st.selectbox(t("cad_col_z"), bom_cols_opt, key="bom_ref_z_col",
+                                        index=guess_col_index(bom_cols, ["기준높이", "높이", "height", "z"], offset=1))
                 bom_col_map = {
                     "part_no": b_pn,
                     "weight": None if b_w == t("cad_col_none") else b_w,
