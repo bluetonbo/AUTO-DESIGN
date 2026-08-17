@@ -675,7 +675,13 @@ def compare_cad_property(current_val, ref_val, tolerance_pct):
     허용오차 이내면 100점, 벗어난 정도에 비례해 감점 (JOINT 배지 4단계와 동일한 점수 스케일 사용)
     """
     if current_val is None or ref_val is None:
-        return None, None, None, "값 없음"
+        if current_val is None and ref_val is None:
+            reason = "CAD 실측값·기준값 모두 없음"
+        elif current_val is None:
+            reason = "CAD 파일에 실측값 없음 (컬럼 매핑 확인)"
+        else:
+            reason = "비교 대상 기준값 없음"
+        return None, None, None, reason
     if ref_val == 0:
         diff_pct = 0.0 if current_val == 0 else 100.0
     else:
@@ -742,9 +748,8 @@ def run_cad_comparison(cad_df, col_map, bom_df, bom_col_map, tolerance_pct, comp
             for dim_key, dim_label in [("weight", "무게"), ("x", "가로"), ("y", "세로"), ("z", "높이")]:
                 ref_val = bref.get(dim_key) if bref else None
                 match, score, diff_pct, comment = compare_cad_property(cur[dim_key], ref_val, tolerance_pct)
-                if score is not None:
-                    checks.append({"source": "BOM", "dim": dim_label, "match": match, "score": score,
-                                    "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
+                checks.append({"source": "BOM", "dim": dim_label, "match": match, "score": score,
+                                "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
         # vs 이전 리비전
         if compare_prev:
             prev_entry = find_previous_cad_entry(part_no, prev_log, before_timestamp=now_ts) if prev_log is not None else None
@@ -754,9 +759,8 @@ def run_cad_comparison(cad_df, col_map, bom_df, bom_col_map, tolerance_pct, comp
             ]:
                 ref_val = _to_float(prev_entry.get(log_key)) if prev_entry else None
                 match, score, diff_pct, comment = compare_cad_property(cur[dim_key], ref_val, tolerance_pct)
-                if score is not None:
-                    checks.append({"source": "PREV", "dim": dim_label, "match": match, "score": score,
-                                    "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
+                checks.append({"source": "PREV", "dim": dim_label, "match": match, "score": score,
+                                "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
         # vs 도면 표기 치수 (타이틀블록/노트란에 명시적으로 라벨링된 요약값만 인식됨 — 1번 탭 실행 필요)
         if compare_dwg:
             dwg_entry = (dwg_dim_index or {}).get(normalize(part_no))
@@ -764,11 +768,11 @@ def run_cad_comparison(cad_df, col_map, bom_df, bom_col_map, tolerance_pct, comp
             for dim_key, dim_label in [("weight", "무게"), ("x", "가로"), ("y", "세로"), ("z", "높이")]:
                 ref_val = dwg_dims.get(dim_key) if dwg_dims else None
                 match, score, diff_pct, comment = compare_cad_property(cur[dim_key], ref_val, tolerance_pct)
-                if score is not None:
-                    checks.append({"source": "DWG", "dim": dim_label, "match": match, "score": score,
-                                    "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
+                checks.append({"source": "DWG", "dim": dim_label, "match": match, "score": score,
+                                "diff_pct": diff_pct, "cur": cur[dim_key], "ref": ref_val, "comment": comment})
 
-        overall_score = (sum(c["score"] for c in checks) / len(checks)) if checks else None
+        _scored = [c["score"] for c in checks if c["score"] is not None]
+        overall_score = (sum(_scored) / len(_scored)) if _scored else None
         results.append({
             "part_no": part_no, "current": cur, "checks": checks, "overall_score": overall_score,
         })
@@ -1645,7 +1649,7 @@ with tab5:
                     unsafe_allow_html=True,
                 )
                 if not r["checks"]:
-                    st.caption(t("cad_no_prev") if compare_prev else t("cad_no_checks"))
+                    st.caption(t("cad_no_checks"))
                 else:
                     for c in r["checks"]:
                         _src_map_ko = {"BOM": "BOM", "PREV": "이전 리비전", "DWG": "도면 표기"}
