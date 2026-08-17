@@ -1241,12 +1241,18 @@ def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use
 
         if grade == "low" and use_llm:
             llm_out = llm_recheck(bom_mat, dwg_mat)
-            if llm_out.startswith("동일"):
+            if llm_out.startswith("동일") or ("동일" in llm_out and "다름" not in llm_out):
                 match, score, grade = True, 92.0, "std"
                 comment = "LLM 재확인: " + llm_out.split("|", 1)[-1].strip()
-            elif llm_out.startswith("다름"):
+            elif llm_out.startswith("다름") or ("다름" in llm_out and "동일" not in llm_out):
                 score, grade = min(score, 15.0), "none"
                 comment = "LLM 재확인: " + llm_out.split("|", 1)[-1].strip()
+            elif llm_out:
+                # 모델이 예상 형식("동일|이유" / "다름|이유")을 안 지킨 경우 —
+                # 판정에는 반영 못 하지만 원문은 남겨서 원인 파악 가능하게 함
+                st.session_state['_llm_last_error'] = (
+                    f"[LLM 재확인] 응답 형식 인식 실패 (판정에 미반영) — 원문: {llm_out[:200]}"
+                )
 
         results.append({
             "part_no": part_no,
