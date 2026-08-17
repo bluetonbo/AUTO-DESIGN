@@ -998,14 +998,14 @@ def llm_recheck(bom_mat: str, dwg_mat: str) -> str:
             f'형식: 동일|이유  또는  다름|이유'
         )
         resp = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=50,
             temperature=0,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        st.session_state['_sheets_last_error'] = _sanitize_secret_text(str(e))
+        st.session_state['_llm_last_error'] = _sanitize_secret_text(f"[LLM 재확인 실패] {type(e).__name__}: {e}")
         return ""
 
 
@@ -1192,6 +1192,8 @@ def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use
     alias_lookup = build_alias_lookup(st.session_state["material_map"])
     if use_vision:
         st.session_state['_vision_last_error'] = None  # 이전 실행의 잔여 에러 메시지 제거
+    if use_llm:
+        st.session_state['_llm_last_error'] = None
 
     dwg_index = {}
     for f in dwg_files:
@@ -1459,6 +1461,9 @@ with tab1:
         _vision_err = st.session_state.get('_vision_last_error')
         if _vision_err:
             st.warning(f"⚠️ {_vision_err}")
+        _llm_err = st.session_state.get('_llm_last_error')
+        if _llm_err:
+            st.warning(f"⚠️ {_llm_err}")
     else:
         st.info(t("no_bom"))
 
