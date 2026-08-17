@@ -1120,7 +1120,8 @@ def rasterize_pdf_first_page(file, resolution=150):
             buf = io.BytesIO()
             img.original.save(buf, format="PNG")
             return buf.getvalue()
-    except Exception:
+    except Exception as e:
+        st.session_state['_vision_last_error'] = _sanitize_secret_text(f"[이미지 렌더링 실패] {type(e).__name__}: {e}")
         return None
 
 
@@ -1141,7 +1142,11 @@ def vision_extract_fields(image_bytes):
     스캔(이미지) 도면에서 Gemini Vision(google-genai SDK)으로 품번/재질/치수/중량을 추출.
     실패 시 빈 dict 반환 (앱은 계속 동작, 해당 파일은 미검출로 처리됨).
     """
-    if not (GEMINI_OK and GEMINI_API_KEY and image_bytes):
+    if not image_bytes:
+        st.session_state['_vision_last_error'] = "[Vision 인식 실패] 렌더링된 이미지가 없습니다 (위 렌더링 실패 메시지 확인)."
+        return {}
+    if not (GEMINI_OK and GEMINI_API_KEY):
+        st.session_state['_vision_last_error'] = "[Vision 인식 실패] GEMINI_OK/GEMINI_API_KEY 조건 불충족 (라이브러리 또는 키 확인 필요)."
         return {}
     try:
         client = gemini_genai.Client(api_key=GEMINI_API_KEY)
@@ -1166,6 +1171,8 @@ def vision_extract_fields(image_bytes):
 
 def run_comparison(bom_df, partno_col, material_col, process_col, dwg_files, use_llm, use_vision=False):
     alias_lookup = build_alias_lookup(st.session_state["material_map"])
+    if use_vision:
+        st.session_state['_vision_last_error'] = None  # 이전 실행의 잔여 에러 메시지 제거
 
     dwg_index = {}
     for f in dwg_files:
@@ -1426,6 +1433,10 @@ with tab1:
                 # Google Sheets에 품번별 상세 이력 영구 저장 (실패해도 앱은 계속 동작)
                 _append_review_history(bom_file.name, len(dwg_files), results)
                 st.success(t("run_done").format(n=len(results)))
+
+        _vision_err = st.session_state.get('_vision_last_error')
+        if _vision_err:
+            st.warning(f"⚠️ {_vision_err}")
     else:
         st.info(t("no_bom"))
 
