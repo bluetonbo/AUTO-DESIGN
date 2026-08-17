@@ -1151,13 +1151,13 @@ def vision_extract_fields(image_bytes):
     try:
         client = gemini_genai.Client(api_key=GEMINI_API_KEY)
         resp = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-flash-latest",
             contents=[
                 _VISION_PROMPT,
                 gemini_types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
             ],
             config=gemini_types.GenerateContentConfig(
-                temperature=0, response_mime_type="application/json",
+                response_mime_type="application/json",
             ),
         )
         raw = (resp.text or "").strip()
